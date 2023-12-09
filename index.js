@@ -1,52 +1,115 @@
-const express = require('express');
-const app = express();
-const fs = require('fs');
+let express = require("express");
+let mysql = require("mysql");
+let crypto = require("crypto");
 
-app.use(express.static('public'));
-app.use(express.urlencoded({ extended: true }));
+let app = express();
+let PORT = 3000;
 
-let users = [];
-try {
-  const data = fs.readFileSync('users.json', 'utf8');
-  if (data) {
-    users = JSON.parse(data);
-  }
-} catch (err) {
-  console.error('Fel vid läsning av filen:', err);
-}
-
-const dirname = __dirname;
-
-app.get("/", (req, res) => {
-  let output = "";
-  if (users && users.length > 0) {
-    for (let i = 0; i < users.length; i++) {
-      output += `<p><br>
-     name: ${users[i].name}<br> 
-     email: ${users[i].email}  <br/>
-     tel: ${users[i].tel}  <br/>
-     comment: ${users[i].comment}</p>`;
-    }
-  }
-  let html = fs.readFileSync(dirname + '/form.html').toString();
-  html = html.replace('GÄST', output);
-  res.send(html);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
-app.post('/submit', (req, res) => {
-  const { name, email, homepage, tel, comment } = req.body;
-  users.push({ name, email, homepage, tel, comment });
+app.use(express.json());
 
-  fs.writeFile('users.json', JSON.stringify(users), (err) => {
-    if (err) {
-      console.error('Fel vid skrivning till filen:', err);
-      return res.status(500).send('Serverfel');
-    }
-    res.redirect('/');
+let con = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "",
+  database: "jennsen2023",
+  multipleStatements: true,
+});
+
+let COLUMNS = ["id", "username", "password", "name", "email"];
+
+// Serve your documentation
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/index.html");
+});
+
+
+app.get("/users", function (req, res) {
+  let sql = "SELECT * FROM users"; 
+  let condition = createCondition(req.query); 
+  console.log(sql + condition); 
+  con.query(sql + condition, function (err, result, fields) {
+    res.send(result);
   });
 });
 
-const port = 3000;
-app.listen(port, () => {
-  console.log(`Webbservern körs på port ${port}`);
+// Function to hash data
+function hash(data) {
+  let hash = crypto.createHash("sha256");
+  hash.update(data);
+  return hash.digest("hex");
+}
+
+// Create condition for SQL queries
+function createCondition(query) {
+  let output = " WHERE ";
+  for (let key in query) {
+    if (COLUMNS.includes(key)) {
+      output += `${key}="${query[key]}" OR `;
+    }
+  }
+  if (output.length === 7) {
+    return "";
+  } else {
+    return output.substring(0, output.length - 4);
+  }
+}
+
+// Route to add a new user with hashed password
+app.post("/users", (req, res) => {
+  if (!req.body.username) {
+    res.status(400).send("username required!");
+    return;
+  }
+  
+
+  let fields = ["name", "password", "email", "username"];
+  for (let key in req.body) {
+    if (!fields.includes(key)) {
+      res.status(400).send("Unknown field: " + key);
+      return;
+    }
+  }
+
+  let sql = `INSERT INTO users (username, email, name, password) 
+  VALUES ('${req.body.username}', 
+          '${req.body.email}',
+          '${req.body.name}',
+          '${hash(req.body.password)}');
+          SELECT LAST_INSERT_ID();`;
+
+  console.log(sql);
+
+  con.query(sql, (err, result, fields) => {
+    if (err) {
+  
+    res.status(500).send("Error inserting data");
+    throw err;
+}
+    console.log(result);
+    let output = {
+      id: result[0].insertId,
+      name: req.body.name,
+      username: req.body.username,
+      email: req.body.email,
+    };
+    res.send(output);
+  });
+});
+
+app.get("/users/:id", function (req, res) {
+  // Värdet på id ligger i req.params
+  let sql = "SELECT * FROM users WHERE id=" + req.params.id;
+  console.log(sql);
+  // skicka query till databasen
+  con.query(sql, function (err, result, fields) {
+    if (result.length > 0) {
+      res.send(result);
+    } else {
+      res.sendStatus(404); // 404=not found
+    }
+  });
 });
